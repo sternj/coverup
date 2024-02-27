@@ -171,15 +171,16 @@ def disable_interfering_tests() -> dict:
 
         else:
             print(f"{failing_test} is failing, looking for culprit(s)...")
-            if btf.run_tests({failing_test}) == {failing_test}:
+            if set(t[0] for t in btf.run_tests({failing_test})) == {failing_test}:
                 print(f"{failing_test} fails by itself(!)")
                 culprits = {failing_test}
             else:
                 culprits = btf.find_culprit(failing_test, test_set=test_set)
 
-        for c in culprits:
-            print(f"Disabling {c}")
-            c.rename(c.parent / ("disabled_" + c.name))
+        for c_path, c_exc in culprits:
+            if 'AssertionError' not in c_exc:
+                print(f"Disabling {c_path}")
+                c_path.rename(c_path.parent / ("disabled_" + c_path.name))
 
 
 def find_imports(python_code: str) -> T.List[str]:
