@@ -6,7 +6,6 @@ import typing as T
 import sys
 import json
 import re
-
 from .delta import DeltaDebugger, _compact
 from .utils import subprocess_run
 
@@ -52,16 +51,16 @@ class ParseError(Exception):
     pass
 
 
-def parse_failed_tests(tests_dir: Path, p: subprocess.CompletedProcess | subprocess.CalledProcessError) -> T.List[T.Tuple[Path, str]]:
+def parse_failed_tests(tests_dir: Path, p: (subprocess.CompletedProcess, subprocess.CalledProcessError)) -> T.List[Path]:
     # FIXME use --junitxml or --report-log
     output = str(p.stdout, 'UTF-8')
     if (m := re.search(r"\n===+ short test summary info ===+\n((?:ERROR|FAILED).*)", output, re.DOTALL)):
         summary = m.group(1)
-        failures = [(Path(m[0]), m[1]) for m in re.findall(r"^(?:ERROR|FAILED) (.*?):.*? - (.*?$)", summary, re.MULTILINE)]
+        failures = [Path(f) for f in re.findall(r"^(?:ERROR|FAILED) ([^\s:]+)", summary, re.MULTILINE)]
 
         if tests_dir.is_absolute():
             # pytest sometimes makes absolute paths into relative ones by adding ../../.. to root...
-            failures = [(m[0].resolve(), m[1]) for m in failures]
+            failures = [f.resolve() for f in failures]
 
         return failures
 
@@ -87,7 +86,7 @@ class BadTestsFinder(DeltaDebugger):
         self.pytest_args = pytest_args
 
 
-    def run_tests(self, tests_to_run: T.Optional[T.Set[str]] = None) -> T.Set[T.Tuple[Path, str]]:
+    def run_tests(self, tests_to_run: set = None) -> Path:
         """Runs the tests, by default all, returning the first one that fails, or None.
            Throws RuntimeError if unable to parse pytest's output.
         """
@@ -122,7 +121,7 @@ class BadTestsFinder(DeltaDebugger):
                 return set()
 
             # bring it back to its normal path
-            failing = set((self.tests_dir / f[0].relative_to(tmpdir), f[1]) for f in parse_failed_tests(tmpdir, p))
+            failing = set(self.tests_dir / f.relative_to(tmpdir) for f in parse_failed_tests(tmpdir, p))
 
             if self.trace:
                 self.trace(f"tests rc={p.returncode} failing={_compact(failing)}\n")
@@ -132,7 +131,7 @@ class BadTestsFinder(DeltaDebugger):
 
 
     def test(self, test_set: set, **kwargs) -> bool:
-        if not (failing_tests := {f[0] for f in self.run_tests(test_set) if 'AssertionError' not in f[1]}):
+        if not (failing_tests := self.run_tests(test_set)):
             return False
 
         # Other tests may fail; we need to know if "our" test failed.
@@ -142,7 +141,7 @@ class BadTestsFinder(DeltaDebugger):
         return True # "interesting"/"reproduced"
 
 
-    def find_culprit(self, failing_test: Path, *, test_set = None) -> T.Set[str]:
+    def find_culprit(self, failing_test: Path, *, test_set = None) -> T.Set[Path]:
         """Returns the set of tests causing 'failing_test' to fail."""
         assert failing_test in self.all_tests
 
