@@ -476,6 +476,7 @@ previously proposed.
 Be sure to include assertions in the test that verify any applicable postconditions.
 Please also make VERY SURE to clean up after the test, so as not to affect other tests;
 use 'pytest-mock' if appropriate.
+Tests should not only run the code but also examine the results. Your assertions should validate all necessary post-conditions.
 Write as little top-level code as possible, and in particular do not include any top-level code
 calling into pytest.main or the test itself.
 Respond ONLY with the Python code enclosed in backticks, without any explanation.
