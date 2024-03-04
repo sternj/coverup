@@ -24,10 +24,15 @@ def parse_args(args=None):
     ap.add_argument('source_files', type=Path, nargs='*',
                     help='only process certain source file(s)')
 
-    ap.add_argument('--tests-dir', type=Path, required=True,
+    def Path_dir(value):
+        path_dir = Path(value)
+        if not path_dir.is_dir(): raise argparse.ArgumentTypeError("must be a directory")
+        return path_dir
+
+    ap.add_argument('--tests-dir', type=Path_dir, required=True,
                     help='directory where tests reside')
 
-    ap.add_argument('--source-dir', '--source', type=Path, required=True,
+    ap.add_argument('--source-dir', '--source', type=Path_dir, required=True,
                     help='directory where sources reside')
 
     ap.add_argument('--checkpoint', type=Path, 
@@ -73,6 +78,9 @@ def parse_args(args=None):
 
     ap.add_argument('--write-requirements-to', type=Path,
                     help='append the name of any missing modules to the given file')
+
+    ap.add_argument('--failing-test-action', choices=['disable', 'find-culprit'], default='disable',
+                    help='what to do about failing tests when checking the entire suite.')
 
     ap.add_argument('--only-disable-interfering-tests', default=False,
                     action=argparse.BooleanOptionalAction,
@@ -164,7 +172,8 @@ def disable_interfering_tests() -> dict:
 
         btf = BadTestsFinder(tests_dir=args.tests_dir, pytest_args=args.pytest_args,
                              trace=(print if args.debug else None))
-        if True:
+
+        if args.failing_test_action == 'disable':
             # just disable failing test(s) while we work on BTF
             print(f"failed ({failing_test}).  Looking for failing tests(s) to disable...")
             culprits = btf.run_tests()
@@ -175,7 +184,7 @@ def disable_interfering_tests() -> dict:
                 print(f"{failing_test} fails by itself(!)")
                 culprits = {failing_test}
             else:
-                culprits = btf.find_culprit(failing_test, test_set=test_set)
+                culprits = btf.find_culprit(failing_test)
 
         for c in culprits:
             print(f"Disabling {c}")
@@ -398,7 +407,11 @@ async def do_chat(seg: CodeSegment, completion: dict) -> str:
     while True:
         try:
             if token_rate_limit:
-                await token_rate_limit.acquire(count_tokens(args.model, completion))
+                try:
+                    await token_rate_limit.acquire(count_tokens(args.model, completion))
+                except ValueError as e:
+                    log_write(seg, f"Error: too many tokens for rate limit ({e})")
+                    return None # gives up this segment
 
             return await openai.ChatCompletion.acreate(**completion)
 
@@ -453,6 +466,7 @@ async def improve_coverage(seg: CodeSegment) -> bool:
     # TODO reinforce use of monkeypatch or other self-cleaning techniques
     messages = [{"role": "user",
                  "content": f"""
+You are an expert Python test-driven developer.
 The code below, extracted from {seg.filename},{' module ' + module_name + ',' if module_name else ''} does not achieve full coverage:
 when tested, {seg.lines_branches_missing_do()} not execute.
 Create a new pytest test function that executes these missing lines/branches, always making
@@ -460,8 +474,8 @@ sure that the new test is correct and indeed improves coverage.
 Always send entire Python test scripts when proposing a new test or correcting one you
 previously proposed.
 Be sure to include assertions in the test that verify any applicable postconditions.
-Please also make VERY SURE to clean up after the test, so as not to affect tests ran after it
-in the same pytest execution.
+Please also make VERY SURE to clean up after the test, so as not to affect other tests;
+use 'pytest-mock' if appropriate.
 Write as little top-level code as possible, and in particular do not include any top-level code
 calling into pytest.main or the test itself.
 Respond ONLY with the Python code enclosed in backticks, without any explanation.
@@ -524,7 +538,7 @@ Respond ONLY with the Python code enclosed in backticks, without any explanation
                 "role": "user",
                 "content": "Executing the test yields an error, shown below.\n" +\
                            "Modify the test to correct it; respond only with the complete Python code in backticks.\n\n" +\
-                           clean_error(str(e.stdout, 'UTF-8'))
+                           clean_error(str(e.stdout, 'UTF-8', errors='ignore'))
             })
             log_write(seg, messages[-1]['content'])
             continue
@@ -616,18 +630,17 @@ def main():
         print("Continuing from checkpoint;  ", end='')
     else:
         try:
-            print("Measuring test suite coverage...  ", end='')
-            coverage = measure_suite_coverage(tests_dir=args.tests_dir, source_dir=args.source_dir,
-                                              pytest_args=args.pytest_args)
+            coverage = disable_interfering_tests()
+
         except subprocess.CalledProcessError as e:
-            print("Error measuring coverage:\n" + str(e.stdout, 'UTF-8'))
+            print("Error measuring coverage:\n" + str(e.stdout, 'UTF-8', errors='ignore'))
             return 1
 
         state = State(coverage)
 
     coverage = state.get_initial_coverage()
 
-    print(f"initial coverage: {coverage['summary']['percent_covered']:.1f}%")
+    print(f"Initial coverage: {coverage['summary']['percent_covered']:.1f}%")
     # TODO also show running coverage estimate
 
     segments = sorted(get_missing_coverage(state.get_initial_coverage(), line_limit=args.line_limit),
@@ -640,6 +653,7 @@ def main():
     # --- (2) prompt for tests ---
 
     print(f"Prompting {args.model} for tests to increase coverage...")
+    print("(in the following, G=good, F=failed, U=useless and R=retry)")
 
     async def work_segment(seg: CodeSegment) -> None:
         if await improve_coverage(seg):
