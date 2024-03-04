@@ -473,7 +473,8 @@ Create a new pytest test function that executes these missing lines/branches, al
 sure that the new test is correct and indeed improves coverage.
 Always send entire Python test scripts when proposing a new test or correcting one you
 previously proposed.
-Be sure to include assertions in the test that verify any applicable postconditions.
+Be sure to include assertions in the test that verify any applicable postconditions. Make sure the test is a regression test that checks for
+correct behavior.
 Please also make VERY SURE to clean up after the test, so as not to affect other tests;
 use 'pytest-mock' if appropriate.
 Tests should not only run the code but also examine the results. Your assertions should validate all necessary post-conditions.
