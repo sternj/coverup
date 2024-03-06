@@ -774,7 +774,7 @@ Respond ONLY with the Python code enclosed in backticks, without any explanation
                 test=last_test,
                 tests_dir=args.tests_dir,
                 pytest_args=args.pytest_args,
-                log_write=lambda msg: log_write(seg, msg),
+                log_write=lambda msg: log_write(code, msg),
             )
 
         except subprocess.TimeoutExpired:
