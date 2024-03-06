@@ -707,6 +707,7 @@ Modify it to correct that; respond only with the complete Python code in backtic
 
 
 async def make_test_robust(code: CodeSegment, test_path: Path):
+    print("DEBUG")
     with open(test_path, "r") as f:
         test_str = f.read()
 
