@@ -919,6 +919,7 @@ def main():
 
     async def work_segment(seg: CodeSegment) -> None:
         done, curr_coverage, created_test = await improve_coverage(seg)
+        print("INFO", done, curr_coverage, created_test)
         if done:
             # Only mark done if was able to complete (True return),
             # so that it can be retried after installing any missing modules
