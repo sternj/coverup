@@ -96,6 +96,7 @@ def get_missing_coverage(coverage, line_limit: int = 100) -> T.List[CodeSegment]
             tree = ast.parse(src.read(), fname)
 
         missing_lines = set(fcov['missing_lines'])
+        print(fcov['missing_lines'])
         executed_lines = set(fcov['executed_lines'])
         missing_branches = fcov.get('missing_branches', set())
 

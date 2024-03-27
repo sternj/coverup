@@ -553,27 +553,45 @@ async def improve_coverage(
     # TODO reinforce use of monkeypatch or other self-cleaning techniques
     messages = [
         {
+#             "role": "user",
+#             "content": f"""
+# You are an expert Python test-driven developer.
+# The code below, extracted from {seg.filename},{' module ' + module_name + ',' if module_name else ''} does not achieve full coverage:
+# when tested, {seg.lines_branches_missing_do()} not execute.
+# Create a new pytest test function that executes these missing lines/branches, always making
+# sure that the new test is correct and indeed improves coverage.
+# Always send entire Python test scripts when proposing a new test or correcting one you
+# previously proposed.
+# Be sure to include assertions in the test that verify any applicable postconditions. Make sure the test is a regression test that checks for
+# correct behavior. When the tested program performs a computation, make sure to perform the full computation in the test on an isolated data structure and check that the result of the original program is the same. Do not compare with exact values.
+# Please also make VERY SURE to clean up after the test, so as not to affect other tests;
+# use 'pytest-mock' if appropriate.
+# Tests should not only run the code but also examine the results. Your assertions should validate all necessary post-conditions.
+# Use `copy.deepcopy` instead of any other copying methods.
+# Write as little top-level code as possible, and in particular do not include any top-level code
+# calling into pytest.main or the test itself.
+# Respond ONLY with the Python code enclosed in backticks, without any explanation.
+# ```python
+# {seg.get_excerpt()}
+# ```
+# """,
             "role": "user",
             "content": f"""
 You are an expert Python test-driven developer.
-The code below, extracted from {seg.filename},{' module ' + module_name + ',' if module_name else ''} does not achieve full coverage:
-when tested, {seg.lines_branches_missing_do()} not execute.
-Create a new pytest test function that executes these missing lines/branches, always making
-sure that the new test is correct and indeed improves coverage.
-Always send entire Python test scripts when proposing a new test or correcting one you
-previously proposed.
-Be sure to include assertions in the test that verify any applicable postconditions. Make sure the test is a regression test that checks for
-correct behavior.
+The code below, extracted from {seg.filename},{' module ' + module_name + ',' if module_name else ''} is lacking tests.
+
+Create pytest regression tests for it.
+When the tested program performs a computation, make sure to perform the full computation in the test on an isolated data structure and check that the result of the original program is the same. Do not compare with exact values.
 Please also make VERY SURE to clean up after the test, so as not to affect other tests;
-use 'pytest-mock' if appropriate.
-Tests should not only run the code but also examine the results. Your assertions should validate all necessary post-conditions.
-Write as little top-level code as possible, and in particular do not include any top-level code
-calling into pytest.main or the test itself.
+
+Code every test carefully so that, if this function is modified in ANY WAY, a test will fail.
+Use `copy.deepcopy` instead of any other copying methods
 Respond ONLY with the Python code enclosed in backticks, without any explanation.
 ```python
 {seg.get_excerpt()}
 ```
 """,
+
         }
     ]
 
@@ -590,7 +608,7 @@ Respond ONLY with the Python code enclosed in backticks, without any explanation
         attempts += 1
         if attempts > args.max_attempts:
             log_write(seg, "Too many attempts, giving up")
-            return True, None, None
+            return False, None, None
 
         if not (
             response := await do_chat(
@@ -603,7 +621,7 @@ Respond ONLY with the Python code enclosed in backticks, without any explanation
             )
         ):
             log_write(seg, "giving up")
-            return True, None, None
+            return False, None, None
 
         response_message = response["choices"][0]["message"]
         log_write(seg, response_message["content"])
@@ -687,8 +705,8 @@ Modify it to correct that; respond only with the complete Python code in backtic
             log_write(seg, messages[-1]["content"])
             state.inc_counter("U")
             continue
-
         # the test is good 'nough...
+
         new_test = new_test_file()
         new_test.write_text(
             f"# file {seg.identify()}\n"
@@ -696,8 +714,9 @@ Modify it to correct that; respond only with the complete Python code in backtic
             + f"# branches {list(format_branches(seg.missing_branches))}\n\n"
             + last_test
         )
+        log_write(seg, f"Success\n\n{json.dumps(messages)}")
 
-        log_write(seg, f"Saved as {new_test}\n")
+        log_write(seg, f"Saved as {new_test}\n") # +  f"Success\n\n{json.dumps(messages)}\n")
         state.inc_counter("G")
         break
     seg_ret = copy.deepcopy(seg)
@@ -723,7 +742,7 @@ async def make_test_robust(code: CodeSegment, test_path: Path):
             "role": "user",
             "content": f"""
 You are an expert Python test-driven developer.
-The code below, extracted from {code.filename},{' module ' + module_name + ',' if module_name else ''} may not catch regressions:
+The test below, which tests from {code.filename},{' module ' + module_name + ',' if module_name else ''} may not catch regressions:
 Your task is to improve the existing test cases or create new ones to ensure that any changes in the code's behavior will be detected.
 Always send entire Python test scripts when proposing a new test or correcting one you
 previously proposed.
@@ -733,7 +752,12 @@ use 'pytest-mock' if appropriate.
 Tests should not only run the code but also examine the results. Your assertions should validate all necessary post-conditions.
 Write as little top-level code as possible, and in particular do not include any top-level code
 calling into pytest.main or the test itself.
+
 Respond ONLY with the Python code enclosed in backticks, without any explanation.
+
+Code:
+{code.get_excerpt()}
+Test:
 {test_str}
 """,
         }
@@ -762,7 +786,7 @@ Respond ONLY with the Python code enclosed in backticks, without any explanation
         ):
             log_write(code, "giving up")
             break
-
+        successful_test = None
         response_message = response["choices"][0]["message"]
         if "```python" in response_message["content"]:
             last_test = extract_python(response_message["content"])
@@ -818,6 +842,9 @@ Modify it to correct that; respond only with the complete Python code in backtic
             )
             log_write(code, messages[-1]["content"])
             continue
+        else:
+            successful_test = last_test
+
         with open(test_path, "w") as f:
             f.write(
                 f"# file {code.identify()}\n"
@@ -826,7 +853,7 @@ Modify it to correct that; respond only with the complete Python code in backtic
                 + last_test
             )
         return True
-
+    return False
 
 def add_to_pythonpath(source_dir: Path):
     import os
@@ -926,8 +953,13 @@ def main():
             state.mark_done(seg)
             if curr_coverage is not None:
                 assert created_test is not None
-                await make_test_robust(curr_coverage, created_test)
-
+                robust_resp = await make_test_robust(curr_coverage, created_test)
+                if not robust_resp:
+                    print("FAILED TO IMPROVE")
+        else:
+            print("FAILED TO DO SEGMENT")
+            print("USAGE:", state.usage)
+            exit(1)
         if args.checkpoint:
             state.save_checkpoint(args.checkpoint)
         progress.signal_one_completed()
@@ -950,7 +982,6 @@ def main():
 
     progress = Progress(total=len(worklist) + seg_done_count, initial=seg_done_count)
     state.set_progress_bar(progress)
-
     async def run_it():
         if args.max_concurrency:
             semaphore = asyncio.Semaphore(args.max_concurrency)
@@ -972,7 +1003,7 @@ def main():
         return 1
 
     progress.close()
-
+    print("USAGE:", state.usage )
     # --- (3) check resulting test suite ---
 
     coverage = disable_interfering_tests()
