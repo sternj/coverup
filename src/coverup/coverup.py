@@ -585,7 +585,8 @@ When the tested program performs a computation, make sure to perform the full co
 Please also make VERY SURE to clean up after the test, so as not to affect other tests;
 
 Code every test carefully so that, if this function is modified in ANY WAY, a test will fail.
-Use `copy.deepcopy` instead of any other copying methods
+Use `copy.deepcopy` instead of any other copying methods. If using numpy or pandas, do not test using empty ndarrays, Series, or DataFrames. When comparing Pandas Series, always use `check_index=False` and specify the `dtype` field based on the docstring provided.
+ When comparing Pandas DataFrames, always use `check_like=True` and specify the `dtype` field based on the docstring provided. When comparing numpy arrays, use numpy.testing.assert_allclose.
 Respond ONLY with the Python code enclosed in backticks, without any explanation.
 ```python
 {seg.get_excerpt()}
@@ -956,8 +957,11 @@ def main():
                 robust_resp = await make_test_robust(curr_coverage, created_test)
                 if not robust_resp:
                     print("FAILED TO IMPROVE")
+                else:
+                    print("IMPROVED")
         else:
             print("FAILED TO DO SEGMENT")
+            print(seg)
             print("USAGE:", state.usage)
             exit(1)
         if args.checkpoint:
